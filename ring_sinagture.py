@@ -16,9 +16,16 @@ class LightweightRingSingatures:
     def generate_key(self, key_size: KeySize) -> None:
         private_key = rsa.generate_private_key(
             key_size=key_size.value, public_exponent=65537)
-        self.p = ((private_key.private_numbers().p) * 2) + 1
-        self.q = ((private_key.private_numbers().q) * 2) + 1
+        self.p = ((private_key.private_numbers().p))
+        self.q = ((private_key.private_numbers().q))
         self.N = self.p*self.q
+
+    def import_public_key(self, public_key: int) -> None:
+        self.public_keys.append(public_key)
+
+    def import_public_keys(self, public_keys: list) -> None:
+        for item in public_keys:
+            self.public_keys.append(item)
 
     def get_public_key(self) -> int:
         return self.N
@@ -26,6 +33,9 @@ class LightweightRingSingatures:
     def print_all(self) -> None:
         print("p: {} \n\n\nq: {}\n\n\nN:{}\n\nI:{}\n\n".format(
             self.p, self.q, self.N, self.I))
+        print("Users public keys: ")
+        for (i, item) in enumerate(self.public_keys):
+            print("{}: {}\n".format(i, item))
 
     def sign(self, message: str, event_id: int) -> Signature:
         self.__calc_key_image(message, event_id)
@@ -37,4 +47,5 @@ class LightweightRingSingatures:
         # print(str(i)+"\n\n")
         c = int(b, 16)
         # print(str(i))
+        print(c < self.N)
         self.I = Tonneli.compute(c, self.N)
