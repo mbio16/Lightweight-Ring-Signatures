@@ -6,9 +6,9 @@ Tom = LightweightRingSingatures()
 Alice = LightweightRingSingatures()
 
 # Generuj klíče
-Bob.generate_key(KeySize.KEY_SIZE_512)
-Tom.generate_key(KeySize.KEY_SIZE_512)
-Alice.generate_key(KeySize.KEY_SIZE_512)
+Bob.generate_key(KeySize.KEY_SIZE_2048)
+Tom.generate_key(KeySize.KEY_SIZE_2048)
+Alice.generate_key(KeySize.KEY_SIZE_2048)
 
 # Export veřejných klíčů
 BobPublicKey = Bob.get_public_key()

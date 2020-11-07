@@ -1,8 +1,10 @@
 from dataclasses import dataclass
 from enum import Enum
 from cryptography.hazmat.primitives.asymmetric import rsa
-from hashlib import sha512
+from hashlib import sha256
 from functools import reduce
+import os
+import sys
 import time
 
 
@@ -29,6 +31,7 @@ class LightweightRingSingatures:
         self.I = dict()
         self.public_keys = list()
         self.params_time = dict()
+        self.rj = None
 
     def test_numbers(self, p: int, q: int) -> None:
         self.p = p
@@ -36,13 +39,13 @@ class LightweightRingSingatures:
         self.N = self.p * self.q
 
     def generate_key(self, key_size: KeySize) -> None:
-        start = time.time()
+        start = time.process_time()
         private_key = rsa.generate_private_key(
             key_size=key_size.value, public_exponent=65537)
         self.p = private_key.private_numbers().p
         self.q = private_key.private_numbers().q
         self.N = self.p*self.q
-        end = time.time()
+        end = time.process_time()
         self.params_time["key_generation"] = end - start
 
     def import_public_key(self, public_key: int) -> None:
@@ -56,41 +59,88 @@ class LightweightRingSingatures:
         return self.N
 
     def print_all(self) -> None:
-        print("\n\np: {} \n\n\nq: {}\n\n\nN:{}\n\nI:{}\n\n".format(
+        print("\np: {} \n\n\nq: {}\n\nN:{}\nI:{}\n".format(
             self.p, self.q, self.N, self.I))
         print("Users public keys: ")
-        for (i, item) in enumerate(self.public_keys):
-            print("{}: {}\n".format(i, item))
+        print("Process time:" + str(self.params_time))
 
-    def sign(self, message: str, event_id: int) -> Signature:
+    def sign(self, message: str, event_id: int, k: int = None) -> Signature:
+        if (k is None):
+            k = len(self.public_keys)
+        assert (k <= len(self.public_keys)
+                ), "K has to be lower or equeal of all public keys imported"
+
         if(self.I.get(event_id, None)) is None:
             self.key_image(event_id)
+        c = list()
+        x = list()
+        # part  1
+
+        r_j = self._get_urandom_for_platform(self.N)
+        h = sha256(str(self._get_all_public_keys_as_one_int()) +
+                   message+str(event_id)).digest().decode("utf-8")
+        c.append(int(sha256(h + str(r_j)).hexdigest()), 16)
+
+        for i in k:
+            N_i = self.public_keys[i]
+            # part 2
+
+            x.append(self._get_urandom_for_platform(N_i))
+            # part 3
+            c.append(
+                int(sha256(str(h) + str((c[-1]*self.I[event_id]) + pow(x[-1], 2, N_i))).hexdigest()), 16)
+            # part 4
+            while(True):
+                residues = list()
+                a = int(int(r_j-(c[-1]*self.I)) % self.N)
+                try:
+                    residues.append(Tonelli.calc(a, self.p))
+                    residues.append(Tonelli.calc(a, self.q))
+                    break
+                except:
+                    x[-1] = os.urandom(self.public_keys[k-1])
+                    c[-1] = int(sha256(str(h)+str((c[-2]*self.I[event_id]
+                                                   ) + pow(x[-1], 2, N_i))).hexdigest(), 16)
+            c.insert(Chinnese_reminder_theorem().calc(
+                residues, (self.p, self.q)))
+            return Signature(
+                I=self.I[event_id],
+                c_1=c[0],
+                x=x
+            )
+
+    def _get_urandom_for_platform(self, max_number: int) -> int:
+        if (max_number > sys.maxsize):
+            return os.urandom(sys.maxsize)
+        else:
+            return os.urandom(max_number)
+
+    def _get_all_public_keys_as_one_int(self) -> int:
+        result = ""
+        for element in self.public_keys:
+            result = result + str(element)
+        return int(result)
 
     def key_image(self, event_id: int) -> None:
+        start = time.time()
         a = int((str(self.p)+str(self.N)+str(event_id))) % self.N
         while(True):
             while(True):
-                residoas = list()
+                residues = list()
                 try:
-                    residoas.append(Tonelli.calc(a, self.p))
-                    residoas.append(Tonelli.calc(a, self.q))
+                    residues.append(Tonelli.calc(a, self.p))
+                    residues.append(Tonelli.calc(a, self.q))
                     break
                 except Exception as e:
                     a = a + 1
-            print("Chineese reminder")
             try:
-                # print(str(residoas))
-                # print(str((self.p, self.q)))
                 self.I[event_id] = Chinnese_reminder_theorem().calc(
-                    residoas, (self.p, self.q))
+                    residues, (self.p, self.q))
                 break
             except:
-                exit()
                 a = a + 1
-
-    def _hash_and_return_int(self, a: int) -> int:
-        b = sha512(str(a).encode()).hexdigest()
-        return int(b, 16)
+        end = time.time()
+        self.params_time["key_image"] = end-start
 
 
 class Tonelli:
@@ -141,9 +191,6 @@ class Chinnese_reminder_theorem:
 
     @ staticmethod
     def modInverse(a: int, m: int):
-        # print(str(a) + " mod " + str(m))
-        print("a: " + str(a))
-        print("m: " + str(m))
         g, x, y = Chinnese_reminder_theorem().egcd(a, m)
         if g != 1:
             raise Exception('modular inverse does not exist')
