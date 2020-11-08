@@ -127,6 +127,15 @@ class LightweightRingSingatures:
                 event_id=event_id
             )
 
+    def _calculate_sqrt_mod_p(self, a: int) -> (bool, int):
+        residues = list()
+        try:
+            residues.append(Tonelli.calc(a, self.p))
+            residues.append(Tonelli.calc(a, self.q))
+            return (True, Chinnese_reminder_theorem().calc(residues, (self.p, self.q)))
+        except:
+            return (False, None)
+
     def verify_signature(self, signature: Signature) -> bool:
         c = list()
         r = list()
@@ -171,20 +180,13 @@ class LightweightRingSingatures:
         start = time.time()
         a = int((str(self.p)+str(self.N)+str(event_id))) % self.N
         while(True):
-            while(True):
-                residues = list()
-                try:
-                    residues.append(Tonelli.calc(a, self.p))
-                    residues.append(Tonelli.calc(a, self.q))
-                    break
-                except Exception as e:
-                    a = a + 1
-            try:
-                self.I[event_id] = Chinnese_reminder_theorem().calc(
-                    residues, (self.p, self.q))
+            (success, result) = self._calculate_sqrt_mod_p(a)
+            if(success):
+                self.I[event_id] = result
                 break
-            except:
-                a = a + 1
+            else:
+                a += 1
+                pass
         end = time.time()
         self.params_time["key_image"] = end-start
 
