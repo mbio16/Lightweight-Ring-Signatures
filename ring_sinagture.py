@@ -6,6 +6,7 @@ from functools import reduce
 import os
 import sys
 import time
+import random
 
 
 class KeySize(Enum):
@@ -20,6 +21,8 @@ class Signature:
     I: int
     c_1: int
     x: list
+    message: str
+    event_id: int
 
 
 class LightweightRingSingatures:
@@ -65,6 +68,7 @@ class LightweightRingSingatures:
         print("Process time:" + str(self.params_time))
 
     def sign(self, message: str, event_id: int, k: int = None) -> Signature:
+        start = time.time()
         if (k is None):
             k = len(self.public_keys)
         assert (k <= len(self.public_keys)
@@ -77,43 +81,85 @@ class LightweightRingSingatures:
         # part  1
 
         r_j = self._get_urandom_for_platform(self.N)
-        h = sha256(str(self._get_all_public_keys_as_one_int()) +
-                   message+str(event_id)).digest().decode("utf-8")
-        c.append(int(sha256(h + str(r_j)).hexdigest()), 16)
+        to_be_hashed = str(
+            self._get_all_public_keys_as_one_int()) + message + str(event_id)
+        h = sha256(to_be_hashed.encode()).hexdigest()
+        to_be_hashed = h + str(r_j)
+        h = sha256(to_be_hashed.encode()).hexdigest()
+        c.append(int(h, 16))
 
-        for i in k:
+        # part 2
+        for i in range(k):
             N_i = self.public_keys[i]
-            # part 2
 
             x.append(self._get_urandom_for_platform(N_i))
             # part 3
-            c.append(
-                int(sha256(str(h) + str((c[-1]*self.I[event_id]) + pow(x[-1], 2, N_i))).hexdigest()), 16)
+            right_part = int((c[-1]*self.I[event_id]) +
+                             pow(x[-1], 2, N_i) % N_i)
+            print("rj in singature:" + str(right_part))
+            to_be_hashed = str(h) + str(right_part)
+            c.append(int(sha256(to_be_hashed.encode()).hexdigest(), 16))
             # part 4
+            residues = list()
             while(True):
-                residues = list()
-                a = int(int(r_j-(c[-1]*self.I)) % self.N)
+                a = int(int(r_j-(c[-1]*self.I[event_id])) % self.N)
                 try:
                     residues.append(Tonelli.calc(a, self.p))
                     residues.append(Tonelli.calc(a, self.q))
                     break
                 except:
-                    x[-1] = os.urandom(self.public_keys[k-1])
-                    c[-1] = int(sha256(str(h)+str((c[-2]*self.I[event_id]
-                                                   ) + pow(x[-1], 2, N_i))).hexdigest(), 16)
-            c.insert(Chinnese_reminder_theorem().calc(
-                residues, (self.p, self.q)))
+                    x[-1] = self._get_urandom_for_platform(
+                        self.public_keys[k-1])
+                    right_part = int(
+                        int(c[-2]*self.I[event_id] + pow(x[-1], 2, N_i)) % N_i)
+                    print("recalculating last_ element: " + str(right_part))
+                    to_be_hashed = str(h) + str(right_part)
+                    c[-1] = int(sha256(to_be_hashed.encode()).hexdigest(), 16)
+                    residues = list()
+            x.insert(0, int(Chinnese_reminder_theorem().calc(
+                residues, (self.p, self.q))))
+            self._write_time_sign(start, event_id)
             return Signature(
                 I=self.I[event_id],
                 c_1=c[0],
-                x=x
+                x=x,
+                message=message,
+                event_id=event_id
             )
 
-    def _get_urandom_for_platform(self, max_number: int) -> int:
-        if (max_number > sys.maxsize):
-            return os.urandom(sys.maxsize)
+    def verify_signature(self, signature: Signature) -> bool:
+        c = list()
+        r = list()
+        c.append(signature.c_1)
+        to_be_hashed = str(self._get_all_public_keys_as_one_int) + \
+            signature.message + str(signature.event_id)
+        h = sha256(to_be_hashed.encode()).hexdigest()
+        for (i, x_i) in enumerate(range(len(signature.x))):
+            print("rj in validation: " + str(i) +
+                  str(int(c[i]*signature.I + signature.x[i]) % self.public_keys[i]))
+            r.append(int(c[i]*signature.I + signature.x[i]) %
+                     self.public_keys[i])
+            if (i != len(signature.x)-1):
+                to_be_hashed = str(h) + str(r[-1])
+                c.append(int(sha256(to_be_hashed.encode()).hexdigest(), 16))
+            else:
+                to_be_hashed = str(h) + str(r[-1])
+                print(str(int(sha256(to_be_hashed.encode()).hexdigest(), 16)))
+                print(str(signature.c_1))
+
+    def _write_time_sign(self, start: float, event_id: int) -> None:
+        if(self.params_time.get("sign", None) is None):
+            self.params_time["sign"] = dict()
+            self.params_time["sign"][str(event_id)] = time.time() - start
         else:
-            return os.urandom(max_number)
+            self.params_time["sign"][str(event_id)] = time.time() - start
+
+    def _get_urandom_for_platform(self, max_number: int) -> int:
+        rng = random.SystemRandom()
+        if (max_number > sys.maxsize):
+            return rng.randint(0, sys.maxsize)
+        else:
+            return rng.randint(0, sys.maxsize)
 
     def _get_all_public_keys_as_one_int(self) -> int:
         result = ""
