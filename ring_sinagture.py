@@ -92,13 +92,18 @@ class LightweightRingSingatures:
 
         # part 2
         x = self._sign_part_2(j_index, x)
-        # print(str(x))
 
         # part 3
         c = self._sign_part_3(j_index, x, c, str(h), I)
 
         # part 4
         (c, x) = self._sign_part_4(j_index, I, c, x, r_j, str(h))
+        self._write_time_sign(start, event_id)
+
+        print("array c")
+        print(str(c))
+        print("array x")
+        print(str(x))
         return Signature(
             I=I,
             c_1=c[0],
@@ -107,6 +112,20 @@ class LightweightRingSingatures:
             event_id=event_id,
             public_keys=self.public_keys
         )
+
+    def verify_signature(self, signature: Signature) -> bool:
+        (c, x, event_id, public_keys,
+         message, I) = self._verify_get_parts_from_signature(signature)
+        r = len(public_keys) * [None]
+
+        # part 1
+        h = self._verify_part_1(public_keys, message, event_id)
+
+        # part 2 and 3
+        r = self._verify_part_2_and_3(c, x, r, I, public_keys, h)
+
+        # part 4
+        (result) = self._verify_part_4(c, r, h)
 
     def _sign_part_1(self, message: str, event_id: int, c: list, j_index: int) -> (str, list, int):
         string_to_hash = (
@@ -126,7 +145,7 @@ class LightweightRingSingatures:
         return x
 
     def _sign_part_3(self, j_index: int, x: list, c: list, h: str, I: int) -> list:
-        print(I)
+        # print(I)
         for i in range(j_index+1, len(self.public_keys)):
             # print("First for")
             # print(str(i))
@@ -147,9 +166,9 @@ class LightweightRingSingatures:
         return c
 
     def _sign_part_3_subpart_1(self, c_i: int, I: int, x_i: int, N: int, h: str) -> int:
-        print("subpart")
-        print(str(c_i))
-        print(str(x_i))
+        # print("subpart")
+        # print(str(c_i))
+        # print(str(x_i))
         sub = int(((c_i*I) + pow(x_i, 2)) % N)
         return int(self._hash((str(h), str(sub))) % N)
 
@@ -166,6 +185,37 @@ class LightweightRingSingatures:
                     self.public_keys[j_minus_one_index])
                 c[j_index] = self._sign_part_3_subpart_1(
                     c[j_minus_one_index], I, x[j_minus_one_index], self.public_keys[j_minus_one_index], h)
+
+    def _verify_get_parts_from_signature(self, signature: Signature) -> (list, list, int, list, str):
+        c = len(signature.public_keys) * [None]
+        c[0] = signature.c_1
+        x = signature.x
+        event_id = signature.event_id
+        public_keys = signature.public_keys
+        message = signature.message
+        I = signature.I
+        return (c, x, event_id, public_keys, message, I)
+
+    def _verify_part_1(self, public_keys: list, message: str, event_id: int) -> str:
+        to_be_hashed = (str(self._get_all_public_keys_as_one_int(
+            public_keys)), message, str(event_id))
+        return str(self._hash(to_be_hashed))
+
+    def _verify_part_2_and_3(self, c: list, x: list, r: list, I: int, public_keys: int, h: str) -> (list):
+        for i in range(len(public_keys)):
+            r[i] = int((c[i]*I)+pow(x[i], 2)) % public_keys[i]
+            if (i+1 == len(public_keys)):
+                return r
+            else:
+                c[i+1] = int(self._hash((h, str(r[i]))) % public_keys[i])
+
+    def _verify_part_4(self, c: list, r: list, h: str) -> bool:
+        res = self._hash((h, str(r[-1])))
+        # print(str(res))
+        # print(str(c[1]))
+        print("Array c")
+        print(str(c))
+        return
 
     def _hash(self, parts: list) -> int:
         s = ""
@@ -190,26 +240,6 @@ class LightweightRingSingatures:
             print("Nothing to do in signing... exiting program")
             exit()
 
-    def verify_signature(self, signature: Signature) -> bool:
-        c = list()
-        r = list()
-        c.append(signature.c_1)
-        to_be_hashed = str(self._get_all_public_keys_as_one_int) +\
-            signature.message + str(signature.event_id)
-        h = sha256(to_be_hashed.encode()).hexdigest()
-        for (i, x_i) in enumerate(range(len(signature.x))):
-            print("rj in validation: " + str(i) +
-                  str(int(c[i]*signature.I + signature.x[i]) % self.public_keys[i]))
-            r.append(int(c[i]*signature.I + signature.x[i]) %
-                     self.public_keys[i])
-            if (i != len(signature.x)-1):
-                to_be_hashed = str(h) + str(r[-1])
-                c.append(int(sha256(to_be_hashed.encode()).hexdigest(), 16))
-            else:
-                to_be_hashed = str(h) + str(r[-1])
-                print(str(int(sha256(to_be_hashed.encode()).hexdigest(), 16)))
-                print(str(signature.c_1))
-
     def _write_time_sign(self, start: float, event_id: int) -> None:
         if(self.params_time.get("sign", None) is None):
             self.params_time["sign"] = dict()
@@ -224,9 +254,11 @@ class LightweightRingSingatures:
         else:
             return rng.randint(0, sys.maxsize)
 
-    def _get_all_public_keys_as_one_int(self) -> int:
+    def _get_all_public_keys_as_one_int(self, keys=None) -> int:
+        if(keys is None):
+            keys = self.public_keys
         result = ""
-        for element in self.public_keys:
+        for element in keys:
             result = result + str(element)
         return int(result)
 
