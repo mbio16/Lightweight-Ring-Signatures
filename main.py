@@ -1,15 +1,18 @@
 from ring_sinagture import *
-
+import dataclasses
+import json
 # Definuj uživatele
 Bob = LightweightRingSingatures()
 Tom = LightweightRingSingatures()
 Alice = LightweightRingSingatures()
 
+Eva = LightweightRingSingatures()
 # Generuj klíče
 Bob.generate_key(KeySize.KEY_SIZE_512)
 Tom.generate_key(KeySize.KEY_SIZE_512)
 Alice.generate_key(KeySize.KEY_SIZE_512)
 
+Eva.generate_key(KeySize.KEY_SIZE_512)
 # Export veřejných klíčů
 BobPublicKey = Bob.get_public_key()
 TomPublicKey = Tom.get_public_key()
@@ -20,12 +23,11 @@ public_keys = (BobPublicKey, TomPublicKey, AlicePublicKey)
 Bob.import_public_keys(public_keys)
 Tom.import_public_keys(public_keys)
 Alice.import_public_keys(public_keys)
-
+Eva.import_public_keys(public_keys)
 
 Bob.key_image(3)
-Bob.print_all()
-# s: Signature = (Bob.sign("ahoj", 3))
-# # print(str(s))
+s: Signature = (Tom.sign("ahoj", 3))
+print(json.dumps((dataclasses.asdict(s))))
 # Tom.verify_signature(s)
 # # print(str(Bob.params_time))
 # # Bob.print_all()

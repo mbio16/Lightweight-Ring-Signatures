@@ -23,6 +23,7 @@ class Signature:
     x: list
     message: str
     event_id: int
+    public_keys: list
 
 
 class LightweightRingSingatures:
@@ -76,56 +77,101 @@ class LightweightRingSingatures:
 
         if(self.I.get(event_id, None)) is None:
             self.key_image(event_id)
-        c = list()
-        x = list()
-        # part  1
 
-        r_j = self._get_urandom_for_platform(self.N)
-        to_be_hashed = str(
-            self._get_all_public_keys_as_one_int()) + message + str(event_id)
-        h = sha256(to_be_hashed.encode()).hexdigest()
-        to_be_hashed = h + str(r_j)
-        h = sha256(to_be_hashed.encode()).hexdigest()
-        c.append(int(h, 16))
+        # create array with no elements of size of all users
+        c = len(self.public_keys) * [None]
+        x = len(self.public_keys) * [None]
+        I = self.I.get(event_id)
+        # find index of singing user in public key array
+        j_index = self._find_index_of_signing_user()
+        # part  1
+        (h, c, r_j) = self._sign_part_1(message, event_id, c, j_index)
+        # print(str(h))
+        # print(str(c))
+        # print(str(r_j))
 
         # part 2
-        for i in range(k):
-            N_i = self.public_keys[i]
+        x = self._sign_part_2(j_index, x)
+        # print(str(x))
 
-            x.append(self._get_urandom_for_platform(N_i))
-            # part 3
-            right_part = int((c[-1]*self.I[event_id]) +
-                             pow(x[-1], 2, N_i) % N_i)
-            print("rj in singature:" + str(right_part))
-            to_be_hashed = str(h) + str(right_part)
-            c.append(int(sha256(to_be_hashed.encode()).hexdigest(), 16))
-            # part 4
-            residues = list()
-            while(True):
-                a = int(int(r_j-(c[-1]*self.I[event_id])) % self.N)
-                try:
-                    residues.append(Tonelli.calc(a, self.p))
-                    residues.append(Tonelli.calc(a, self.q))
-                    break
-                except:
-                    x[-1] = self._get_urandom_for_platform(
-                        self.public_keys[k-1])
-                    right_part = int(
-                        int(c[-2]*self.I[event_id] + pow(x[-1], 2, N_i)) % N_i)
-                    print("recalculating last_ element: " + str(right_part))
-                    to_be_hashed = str(h) + str(right_part)
-                    c[-1] = int(sha256(to_be_hashed.encode()).hexdigest(), 16)
-                    residues = list()
-            x.insert(0, int(Chinnese_reminder_theorem().calc(
-                residues, (self.p, self.q))))
-            self._write_time_sign(start, event_id)
-            return Signature(
-                I=self.I[event_id],
-                c_1=c[0],
-                x=x,
-                message=message,
-                event_id=event_id
-            )
+        # part 3
+        c = self._sign_part_3(j_index, x, c, str(h), I)
+
+        # part 4
+        (c, x) = self._sign_part_4(j_index, I, c, x, r_j, str(h))
+        return Signature(
+            I=I,
+            c_1=c[0],
+            x=x,
+            message=message,
+            event_id=event_id,
+            public_keys=self.public_keys
+        )
+
+    def _sign_part_1(self, message: str, event_id: int, c: list, j_index: int) -> (str, list, int):
+        string_to_hash = (
+            str(self._get_all_public_keys_as_one_int), message, str(event_id))
+        h = self._hash(string_to_hash)
+        r_j = self._get_urandom_for_platform(self.N)
+        c[(j_index+1) % len(self.public_keys)
+          ] = int(self._hash((str(h), str(r_j))) % self.N)
+        return (h, c, r_j)
+
+    def _sign_part_2(self, j_index: list, x: list) -> list:
+        for i in range(len(self.public_keys)):
+            if (i == j_index):
+                continue
+            else:
+                x[i] = self._get_urandom_for_platform(self.public_keys[i])
+        return x
+
+    def _sign_part_3(self, j_index: int, x: list, c: list, h: str, I: int) -> list:
+        print(I)
+        for i in range(j_index+1, len(self.public_keys)):
+            # print("First for")
+            # print(str(i))
+            # print(str(x[i]))
+            # print(str(c[i]))
+            # print("------------")
+            c[(i+1) % len(self.public_keys)
+              ] = self._sign_part_3_subpart_1(c[i], I, x[i], self.public_keys[i], h)
+
+        for i in range(0, j_index):
+            c[(i+1) % len(self.public_keys)
+              ] = self._sign_part_3_subpart_1(c[i], I, x[i], self.public_keys[i], h)
+            # print("second for")
+            # print(str(i))
+            # print(str(x[i]))
+            # print(str(c[i]))
+            # print("------------")
+        return c
+
+    def _sign_part_3_subpart_1(self, c_i: int, I: int, x_i: int, N: int, h: str) -> int:
+        print("subpart")
+        print(str(c_i))
+        print(str(x_i))
+        sub = int(((c_i*I) + pow(x_i, 2)) % N)
+        return int(self._hash((str(h), str(sub))) % N)
+
+    def _sign_part_4(self, j_index: int, I: int, c: list, x: list, r_j: int, h: str):
+        while(True):
+            t_j = int(r_j-(c[j_index]*I) % self.N)
+            (residuo_exists, x_j) = self._calculate_sqrt_mod_p(t_j)
+            if(residuo_exists):
+                x[j_index] = x_j
+                return (c, x)
+            else:
+                j_minus_one_index = (j_index - 1) % len(self.public_keys)
+                x[j_minus_one_index] = self._get_urandom_for_platform(
+                    self.public_keys[j_minus_one_index])
+                c[j_index] = self._sign_part_3_subpart_1(
+                    c[j_minus_one_index], I, x[j_minus_one_index], self.public_keys[j_minus_one_index], h)
+
+    def _hash(self, parts: list) -> int:
+        s = ""
+        for part in parts:
+            s = s + part
+        return int(sha256(s.encode()).hexdigest(), 16)
 
     def _calculate_sqrt_mod_p(self, a: int) -> (bool, int):
         residues = list()
@@ -136,11 +182,19 @@ class LightweightRingSingatures:
         except:
             return (False, None)
 
+    def _find_index_of_signing_user(self) -> int:
+        try:
+            return self.public_keys.index(self.N)
+        except Exception as e:
+            print("User who wants to sign is not in RING GROUP")
+            print("Nothing to do in signing... exiting program")
+            exit()
+
     def verify_signature(self, signature: Signature) -> bool:
         c = list()
         r = list()
         c.append(signature.c_1)
-        to_be_hashed = str(self._get_all_public_keys_as_one_int) + \
+        to_be_hashed = str(self._get_all_public_keys_as_one_int) +\
             signature.message + str(signature.event_id)
         h = sha256(to_be_hashed.encode()).hexdigest()
         for (i, x_i) in enumerate(range(len(signature.x))):
