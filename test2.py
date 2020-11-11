@@ -1,0 +1,33 @@
+from ring_sinagture import *
+Bob = LightweightRingSingatures()
+Bob.test_numbers(
+    108796115952912283679970288201469165661712867190574433282151176739484825252819,
+    104549639216250505199997196890662372105000831813744972032131684687539424603149)
+Bob.key_image(3)
+#s.sign("a", 3)
+
+
+Alice = LightweightRingSingatures()
+Alice.test_numbers(
+    113913962371530579558160947750364959237805203661964413567085242711568843905123,
+    103208463714165552352734658794267406994483863654496998153839890625489103479749)
+Alice.key_image(3)
+
+
+Tom = LightweightRingSingatures()
+Tom.test_numbers(
+    110000295009879248016090783806450535692240827443999767033577596331224083228187,
+    104442112272734763131833569385794241142837727067717742406872957164303463904919)
+Tom.key_image(3)
+
+
+BobPublicKey = Bob.get_public_key()
+TomPublicKey = Tom.get_public_key()
+AlicePublicKey = Alice.get_public_key()
+public_keys = (BobPublicKey, TomPublicKey, AlicePublicKey)
+Bob.import_public_keys(public_keys)
+
+
+s = Bob.sign("1", 3)
+
+Alice.verify_signature(s)

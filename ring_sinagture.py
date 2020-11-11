@@ -15,7 +15,6 @@ class KeySize(Enum):
     KEY_SIZE_4096 = 4096
     KEY_SIZE_512 = 512
 
-
 @dataclass
 class Signature:
     I: int
@@ -36,6 +35,7 @@ class LightweightRingSingatures:
         self.public_keys = list()
         self.params_time = dict()
         self.rj = None
+        self.keyimage_base = None
 
     def test_numbers(self, p: int, q: int) -> None:
         self.p = p
@@ -63,17 +63,12 @@ class LightweightRingSingatures:
         return self.N
 
     def print_all(self) -> None:
-        print("\np: {} \n\n\nq: {}\n\nN:{}\nI:{}\n".format(
-            self.p, self.q, self.N, self.I))
-        print("Users public keys: ")
+        print("\np: {} \n\n\nq: {}\n\nN:{}\n\nI:{}\n\nbase:{}\n".format(
+            self.p, self.q, self.N, self.I, self.keyimage_base))
         print("Process time:" + str(self.params_time))
 
-    def sign(self, message: str, event_id: int, k: int = None) -> Signature:
+    def sign(self, message: str, event_id: int, ) -> Signature:
         start = time.time()
-        if (k is None):
-            k = len(self.public_keys)
-        assert (k <= len(self.public_keys)
-                ), "K has to be lower or equeal of all public keys imported"
 
         if(self.I.get(event_id, None)) is None:
             self.key_image(event_id)
@@ -82,16 +77,17 @@ class LightweightRingSingatures:
         c = len(self.public_keys) * [None]
         x = len(self.public_keys) * [None]
         I = self.I.get(event_id)
+
         # find index of singing user in public key array
         j_index = self._find_index_of_signing_user()
+        
         # part  1
         (h, c, r_j) = self._sign_part_1(message, event_id, c, j_index)
-        # print(str(h))
-        # print(str(c))
-        # print(str(r_j))
+
 
         # part 2
         x = self._sign_part_2(j_index, x)
+
 
         # part 3
         c = self._sign_part_3(j_index, x, c, str(h), I)
@@ -100,10 +96,6 @@ class LightweightRingSingatures:
         (c, x) = self._sign_part_4(j_index, I, c, x, r_j, str(h))
         self._write_time_sign(start, event_id)
 
-        print("array c")
-        print(str(c))
-        print("array x")
-        print(str(x))
         return Signature(
             I=I,
             c_1=c[0],
@@ -114,26 +106,29 @@ class LightweightRingSingatures:
         )
 
     def verify_signature(self, signature: Signature) -> bool:
+        start = time.time()
         (c, x, event_id, public_keys,
          message, I) = self._verify_get_parts_from_signature(signature)
         r = len(public_keys) * [None]
 
         # part 1
         h = self._verify_part_1(public_keys, message, event_id)
-
         # part 2 and 3
         r = self._verify_part_2_and_3(c, x, r, I, public_keys, h)
 
         # part 4
-        (result) = self._verify_part_4(c, r, h)
+        (result) = self._verify_part_4(c, r, h,public_keys)
+        print(str(result))
 
     def _sign_part_1(self, message: str, event_id: int, c: list, j_index: int) -> (str, list, int):
         string_to_hash = (
-            str(self._get_all_public_keys_as_one_int), message, str(event_id))
-        h = self._hash(string_to_hash)
-        r_j = self._get_urandom_for_platform(self.N)
-        c[(j_index+1) % len(self.public_keys)
-          ] = int(self._hash((str(h), str(r_j))) % self.N)
+            str(self._get_all_public_keys_as_one_int()), message, str(event_id))
+        h = self._hash(string_to_hash,self.public_keys[0])
+        r_j = self._get_urandom_for_platform(self.N) 
+        
+        c_index_plus_1 = (j_index+1) % len(self.public_keys)
+        c[c_index_plus_1
+          ] = self._hash((str(h), str(r_j)),self.public_keys[c_index_plus_1])
         return (h, c, r_j)
 
     def _sign_part_2(self, j_index: list, x: list) -> list:
@@ -145,46 +140,39 @@ class LightweightRingSingatures:
         return x
 
     def _sign_part_3(self, j_index: int, x: list, c: list, h: str, I: int) -> list:
-        # print(I)
         for i in range(j_index+1, len(self.public_keys)):
-            # print("First for")
-            # print(str(i))
-            # print(str(x[i]))
-            # print(str(c[i]))
-            # print("------------")
-            c[(i+1) % len(self.public_keys)
-              ] = self._sign_part_3_subpart_1(c[i], I, x[i], self.public_keys[i], h)
+
+            i_plus_1 = (i+1) % len(self.public_keys)
+            c[i_plus_1
+              ] = self._sign_part_3_subpart_1(c[i], I, x[i], self.public_keys[i],self.public_keys[i_plus_1], h)
 
         for i in range(0, j_index):
-            c[(i+1) % len(self.public_keys)
-              ] = self._sign_part_3_subpart_1(c[i], I, x[i], self.public_keys[i], h)
-            # print("second for")
-            # print(str(i))
-            # print(str(x[i]))
-            # print(str(c[i]))
-            # print("------------")
+            i_plus_1 = (i+1) % len(self.public_keys)
+            c[i_plus_1
+              ] = self._sign_part_3_subpart_1(c[i], I, x[i], self.public_keys[i],self.public_keys[i_plus_1], h)
+
         return c
 
-    def _sign_part_3_subpart_1(self, c_i: int, I: int, x_i: int, N: int, h: str) -> int:
-        # print("subpart")
-        # print(str(c_i))
-        # print(str(x_i))
+    def _sign_part_3_subpart_1(self, c_i: int, I: int, x_i: int, N:int,N_i_plus_1: int, h: str) -> int:
+
         sub = int(((c_i*I) + pow(x_i, 2)) % N)
-        return int(self._hash((str(h), str(sub))) % N)
+
+        return self._hash((str(h), str(sub)),N_i_plus_1)
 
     def _sign_part_4(self, j_index: int, I: int, c: list, x: list, r_j: int, h: str):
         while(True):
-            t_j = int(r_j-(c[j_index]*I) % self.N)
+            t_j = int((r_j-(c[j_index]*I)) % self.N)
             (residuo_exists, x_j) = self._calculate_sqrt_mod_p(t_j)
             if(residuo_exists):
                 x[j_index] = x_j
                 return (c, x)
             else:
+                print("Recalution of x_j-1")
                 j_minus_one_index = (j_index - 1) % len(self.public_keys)
                 x[j_minus_one_index] = self._get_urandom_for_platform(
                     self.public_keys[j_minus_one_index])
                 c[j_index] = self._sign_part_3_subpart_1(
-                    c[j_minus_one_index], I, x[j_minus_one_index], self.public_keys[j_minus_one_index], h)
+                    c[j_minus_one_index], I, x[j_minus_one_index], self.public_keys[j_minus_one_index],self.N, h)
 
     def _verify_get_parts_from_signature(self, signature: Signature) -> (list, list, int, list, str):
         c = len(signature.public_keys) * [None]
@@ -199,7 +187,7 @@ class LightweightRingSingatures:
     def _verify_part_1(self, public_keys: list, message: str, event_id: int) -> str:
         to_be_hashed = (str(self._get_all_public_keys_as_one_int(
             public_keys)), message, str(event_id))
-        return str(self._hash(to_be_hashed))
+        return str(self._hash(to_be_hashed, public_keys[0]))
 
     def _verify_part_2_and_3(self, c: list, x: list, r: list, I: int, public_keys: int, h: str) -> (list):
         for i in range(len(public_keys)):
@@ -207,21 +195,18 @@ class LightweightRingSingatures:
             if (i+1 == len(public_keys)):
                 return r
             else:
-                c[i+1] = int(self._hash((h, str(r[i]))) % public_keys[i])
+                c[i+1] = self._hash((h, str(r[i])),public_keys[i+1])
 
-    def _verify_part_4(self, c: list, r: list, h: str) -> bool:
-        res = self._hash((h, str(r[-1])))
-        # print(str(res))
-        # print(str(c[1]))
-        print("Array c")
-        print(str(c))
-        return
+    def _verify_part_4(self, c: list, r: list, h: str,public_keys) -> bool:
+        res = self._hash((h, str(r[-1])),public_keys[0])
+        return res == c[0]
 
-    def _hash(self, parts: list) -> int:
+    def _hash(self, parts: list,n:int) -> int:
         s = ""
         for part in parts:
             s = s + part
-        return int(sha256(s.encode()).hexdigest(), 16)
+        return int(int(sha256(s.encode()).hexdigest(), 16) % n)
+
 
     def _calculate_sqrt_mod_p(self, a: int) -> (bool, int):
         residues = list()
@@ -250,10 +235,9 @@ class LightweightRingSingatures:
     def _get_urandom_for_platform(self, max_number: int) -> int:
         rng = random.SystemRandom()
         if (max_number > sys.maxsize):
-            return rng.randint(0, sys.maxsize)
+            return rng.randint(0,sys.maxsize)
         else:
-            return rng.randint(0, sys.maxsize)
-
+            return rng.randint(0,max_number)
     def _get_all_public_keys_as_one_int(self, keys=None) -> int:
         if(keys is None):
             keys = self.public_keys
@@ -269,6 +253,7 @@ class LightweightRingSingatures:
             (success, result) = self._calculate_sqrt_mod_p(a)
             if(success):
                 self.I[event_id] = result
+                self.keyimage_base = a
                 break
             else:
                 a += 1
