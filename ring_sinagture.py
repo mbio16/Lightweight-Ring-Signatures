@@ -1,19 +1,13 @@
 from dataclasses import dataclass
 from enum import Enum
-from cryptography.hazmat.primitives.asymmetric import rsa
 from hashlib import sha256
 from functools import reduce
 import os
 import sys
 import time
 import random
+import subprocess
 
-
-class KeySize(Enum):
-    KEY_SIZE_1024 = 1024
-    KEY_SIZE_2048 = 2048
-    KEY_SIZE_4096 = 4096
-    KEY_SIZE_512 = 512
 
 @dataclass
 class Signature:
@@ -36,18 +30,18 @@ class LightweightRingSingatures:
         self.params_time = dict()
         self.rj = None
         self.keyimage_base = None
+        self.verified_key_images = dict()
 
     def test_numbers(self, p: int, q: int) -> None:
         self.p = p
         self.q = q
         self.N = self.p * self.q
 
-    def generate_key(self, key_size: KeySize) -> None:
+    def generate_key(self) -> None:
         start = time.process_time()
-        private_key = rsa.generate_private_key(
-            key_size=key_size.value, public_exponent=65537)
-        self.p = private_key.private_numbers().p
-        self.q = private_key.private_numbers().q
+
+        self.p = int(subprocess.run(["openssl","prime","-generate","-bits", "32", "-hex"], capture_output=True, text=True).stdout[:-1],16)
+        self.q = int(subprocess.run(["openssl","prime","-generate","-bits", "32", "-hex"], capture_output=True, text=True).stdout[:-1],16)
         self.N = self.p*self.q
         end = time.process_time()
         self.params_time["key_generation"] = end - start
@@ -63,10 +57,10 @@ class LightweightRingSingatures:
         return self.N
 
     def print_all(self) -> None:
-        print("\np: {} \n\n\nq: {}\n\nN:{}\n\nI:{}\n\nbase:{}\n".format(
+        print("\np: {} \n\n\nq: {}\n\nN:{}\n\nI:{}\n\nbase: {}\n".format(
             self.p, self.q, self.N, self.I, self.keyimage_base))
         print("Process time:" + str(self.params_time))
-
+        print("Verify: {}".format(str(self.verified_key_images)))  
     def sign(self, message: str, event_id: int, ) -> Signature:
         start = time.time()
 
@@ -93,9 +87,9 @@ class LightweightRingSingatures:
         c = self._sign_part_3(j_index, x, c, str(h), I)
 
         # part 4
-        (c, x) = self._sign_part_4(j_index, I, c, x, r_j, str(h))
-        self._write_time_sign(start, event_id)
-
+        (c, x,recalculated_x) = self._sign_part_4(j_index, I, c, x, r_j, str(h))
+        self._write_time_sign(start, event_id,recalculated_x,message)
+        
         return Signature(
             I=I,
             c_1=c[0],
@@ -118,8 +112,14 @@ class LightweightRingSingatures:
 
         # part 4
         (result) = self._verify_part_4(c, r, h,public_keys)
-        print(str(result))
-
+        if result:
+            unique = self._verify_part_5(I ,event_id,message)
+            self._write_time_verify(start,I,event_id)
+        
+            #print (result and unique)
+            return (result and unique)
+        else:
+            return False
     def _sign_part_1(self, message: str, event_id: int, c: list, j_index: int) -> (str, list, int):
         string_to_hash = (
             str(self._get_all_public_keys_as_one_int()), message, str(event_id))
@@ -160,14 +160,15 @@ class LightweightRingSingatures:
         return self._hash((str(h), str(sub)),N_i_plus_1)
 
     def _sign_part_4(self, j_index: int, I: int, c: list, x: list, r_j: int, h: str):
+        recalculating_x = 0
         while(True):
             t_j = int((r_j-(c[j_index]*I)) % self.N)
             (residuo_exists, x_j) = self._calculate_sqrt_mod_p(t_j)
             if(residuo_exists):
                 x[j_index] = x_j
-                return (c, x)
+                return (c, x,recalculating_x)
             else:
-                print("Recalution of x_j-1")
+                recalculating_x += 1
                 j_minus_one_index = (j_index - 1) % len(self.public_keys)
                 x[j_minus_one_index] = self._get_urandom_for_platform(
                     self.public_keys[j_minus_one_index])
@@ -201,6 +202,34 @@ class LightweightRingSingatures:
         res = self._hash((h, str(r[-1])),public_keys[0])
         return res == c[0]
 
+    def _verify_part_5(self,I:int, event_id:int, message:str)->bool:
+        if(self.verified_key_images.get(str(event_id),None) is None):
+            self.verified_key_images[str(event_id)] = list()
+            self.verified_key_images[str(event_id)].append({
+                "message":message,
+                "I":I
+            })
+            return True
+        else:
+            for record in self.verified_key_images[str(event_id)]:
+                if(record["I"] == int(I)):
+                    if record["message"] == message:
+                        return True
+                    else:
+                        return False
+            self.verified_key_images[str(event_id)].append({
+                "message":message,
+                "I":I
+            })
+            return True
+    def _write_time_verify(self,start:int,I:int,event_id:int)->None:
+        if(self.params_time.get("verify",None) is None):
+            self.params_time["verify"] = list()
+        self.params_time["verify"].append({
+            "I":I,
+            "event_id" : event_id,
+            "verify_time" : time.time() - start
+        })
     def _hash(self, parts: list,n:int) -> int:
         s = ""
         for part in parts:
@@ -223,14 +252,14 @@ class LightweightRingSingatures:
         except Exception as e:
             print("User who wants to sign is not in RING GROUP")
             print("Nothing to do in signing... exiting program")
-            exit()
+            exit(0)
 
-    def _write_time_sign(self, start: float, event_id: int) -> None:
+    def _write_time_sign(self, start: float, event_id: int,recalculated_x:int, message:str) -> None:
         if(self.params_time.get("sign", None) is None):
             self.params_time["sign"] = dict()
-            self.params_time["sign"][str(event_id)] = time.time() - start
-        else:
-            self.params_time["sign"][str(event_id)] = time.time() - start
+            self.params_time["sign"][str(event_id)] = dict()
+        self.params_time["sign"][str(event_id)]["time"] = time.time() - start
+        self.params_time["sign"][str(event_id)]["recalculatated_x"] = recalculated_x
 
     def _get_urandom_for_platform(self, max_number: int) -> int:
         rng = random.SystemRandom()
