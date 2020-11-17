@@ -298,37 +298,37 @@ class LightweightRingSingatures:
 class Tonelli:
     @ staticmethod
     def legendre(a:mpz, p:mpz)->mpz:
-        return pow(a, (p - 1) // 2, p)
+        return gmpy2.powmod(a, gmpy2.sub(p,mpz(1)) // 2, p)
 
     @ staticmethod
     def calc(n: mpz, p: mpz) -> mpz:
         assert Tonelli.legendre(n, p) == 1, "not a square (mod p)"
-        q = p - 1
-        s = 0
-        while q % 2 == 0:
-            q //= 2
-            s += 1
+        q = gmpy2.sub(p,mpz(1))
+        s = mpz(0)
+        while gmpy2.f_mod(q,mpz(2)) == 0:
+            q //= mpz(2)
+            s = gmpy2.add(s,mpz(1))
         if s == 1:
-            return pow(n, (p + 1) // 4, p)
+            return gmpy2.powmod(n, gmpy2.add(p,mpz(1)) // mpz(4), p)
         for z in range(2, p):
-            if p - 1 == Tonelli.legendre(z, p):
+            if gmpy2.sub(p,mpz(1)) == Tonelli.legendre(mpz(z), p):
                 break
-        c = pow(z, q, p)
-        r = pow(n, (q + 1) // 2, p)
-        t = pow(n, q, p)
+        c = gmpy2.powmod(mpz(z), q, p)
+        r = gmpy2.powmod(n, gmpy2.add(q,mpz(1)) // mpz(2), p)
+        t = gmpy2.powmod(n, q, p)
         m = s
-        t2 = 0
-        while (t - 1) % p != 0:
-            t2 = (t * t) % p
+        t2 = mpz(0)
+        while gmpy2.f_mod(gmpy2.sub(t,mpz(1)), p) != 0:
+            t2 = gmpy2.f_mod(gmpy2.mul(t,t),p)
             for i in range(1, m):
-                if (t2 - 1) % p == 0:
+                if gmpy2.f_mod(gmpy2.sub(t2,mpz(1)),p) == 0:
                     break
-                t2 = (t2 * t2) % p
-            b = pow(c, 1 << (m - i - 1), p)
-            r = (r * b) % p
-            c = (b * b) % p
-            t = (t * c) % p
-            m = i
+                t2 = gmpy2.f_mod(gmpy2.mul(t2,t2),p)
+            b = gmpy2.powmod(c, mpz(1) << gmpy2.sub(gmpy2.sub(m,i),mpz(1)), p)
+            r = gmpy2.f_mod(gmpy2.mul(r,b),p)
+            c = gmpy2.f_mod(gmpy2.mul(b,b),p) #(b * b) % p
+            t = gmpy2.f_mod(gmpy2.mul(t,c),p)#(t * c) % p
+            m = mpz(i)
         return r
 
 
