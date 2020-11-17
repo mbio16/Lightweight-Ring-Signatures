@@ -2,8 +2,9 @@ from dataclasses import dataclass
 from enum import Enum
 from hashlib import sha256
 from functools import reduce
-import gmpy2
-from gmpy2 import mpz
+#import gmpy2
+from gmpy2 import mpz,mul,powmod,add,sub
+from gmpy2 import f_mod as mod
 import os
 import sys
 import time
@@ -12,18 +13,19 @@ import subprocess
 
 @dataclass
 class Signature:
-    I: int
-    c_1: int
+    I: mpz
+    c_1: mpz
     x: list
     message: str
-    event_id: int
+    event_id: mpz
     public_keys: list
 
 class KeySize(Enum):
     Size_512 = 512
     Size_1024 = 1024
     Size_2048 = 2048
-
+    Size_256 = 256
+    Size_32 = 32
 class LightweightRingSingatures:
 
     def __init__(self):
@@ -45,7 +47,7 @@ class LightweightRingSingatures:
     def generate_key(self,size: KeySize) -> None:
         start = time.process_time()
         self.p = mpz(int(subprocess.run(["openssl","prime","-generate","-bits", str(size.value), "-hex"], capture_output=True, text=True).stdout[:-1],16))
-        self.q = int(subprocess.run(["openssl","prime","-generate","-bits", str(size.value), "-hex"], capture_output=True, text=True).stdout[:-1],16)
+        self.q = mpz(subprocess.run(["openssl","prime","-generate","-bits", str(size.value), "-hex"], capture_output=True, text=True).stdout[:-1],16)
         self.N = self.p*self.q
         end = time.process_time()
         self.params_time["key_generation"] = end - start
@@ -57,7 +59,7 @@ class LightweightRingSingatures:
         for item in public_keys:
             self.public_keys.append(item)
 
-    def get_public_key(self) -> int:
+    def get_public_key(self) -> mpz:
         return self.N
 
     def print_all(self) -> None:
@@ -65,9 +67,10 @@ class LightweightRingSingatures:
             self.p, self.q, self.N, self.I, self.keyimage_base))
         print("Process time:" + str(self.params_time))
         print("Verify: {}".format(str(self.verified_key_images)))  
-    def sign(self, message: str, event_id: int, ) -> Signature:
+    
+    def sign(self, message: str, event_id: int) -> Signature:
         start = time.time()
-
+        event_id = mpz(event_id)
         if(self.I.get(event_id, None)) is None:
             self.key_image(event_id)
 
@@ -82,10 +85,8 @@ class LightweightRingSingatures:
         # part  1
         (h, c, r_j) = self._sign_part_1(message, event_id, c, j_index)
 
-
         # part 2
         x = self._sign_part_2(j_index, x)
-
 
         # part 3
         c = self._sign_part_3(j_index, x, c, str(h), I)
@@ -124,7 +125,7 @@ class LightweightRingSingatures:
             return (result and unique)
         else:
             return False
-    def _sign_part_1(self, message: str, event_id: int, c: list, j_index: int) -> (str, list, int):
+    def _sign_part_1(self, message: str, event_id: mpz, c: list, j_index: mpz) -> (str, list, int):
         string_to_hash = (
             str(self._get_all_public_keys_as_one_int()), message, str(event_id))
         h = self._hash(string_to_hash,self.public_keys[0])
@@ -144,36 +145,38 @@ class LightweightRingSingatures:
         return x
 
     def _sign_part_3(self, j_index: int, x: list, c: list, h: str, I: int) -> list:
-        for i in range(j_index+1, len(self.public_keys)):
-
-            i_plus_1 = (i+1) % len(self.public_keys)
+        for i in range(add(j_index,mpz(1)), len(self.public_keys)):
+            i_plus_1 = mod(add(i,mpz(1)),len(self.public_keys))
             c[i_plus_1
               ] = self._sign_part_3_subpart_1(c[i], I, x[i], self.public_keys[i],self.public_keys[i_plus_1], h)
 
         for i in range(0, j_index):
-            i_plus_1 = (i+1) % len(self.public_keys)
+            i_plus_1 = mod(add(i,mpz(1)),len(self.public_keys))
             c[i_plus_1
               ] = self._sign_part_3_subpart_1(c[i], I, x[i], self.public_keys[i],self.public_keys[i_plus_1], h)
 
         return c
 
-    def _sign_part_3_subpart_1(self, c_i: int, I: int, x_i: int, N:int,N_i_plus_1: int, h: str) -> int:
-
-        sub = int(((c_i*I) + pow(x_i, 2)) % N)
+    def _sign_part_3_subpart_1(self, c_i: mpz, I: mpz, x_i: mpz, N:mpz, N_i_plus_1: mpz, h: str) -> int:
+        left = mod(mul(c_i,I),N)
+        right = powmod(x_i,mpz(2),N)
+        sub = mod(add(left,right),N)
 
         return self._hash((str(h), str(sub)),N_i_plus_1)
 
     def _sign_part_4(self, j_index: int, I: int, c: list, x: list, r_j: int, h: str):
-        recalculating_x = 0
+        recalculating_x = mpz(0)
         while(True):
-            t_j = int((r_j-(c[j_index]*I)) % self.N)
+            right = mod(mul(c[j_index],I),self.N)
+            t_j = mod(sub(r_j,right),self.N)
+            #t_j = int((r_j-(c[j_index]*I)) % self.N)
             (residuo_exists, x_j) = self._calculate_sqrt_mod_p(t_j)
             if(residuo_exists):
                 x[j_index] = x_j
                 return (c, x,recalculating_x)
             else:
-                recalculating_x += 1
-                j_minus_one_index = (j_index - 1) % len(self.public_keys)
+                recalculating_x = add(recalculating_x,mpz(1))
+                j_minus_one_index = mod(sub(j_index,mpz(1)),len(self.public_keys))
                 x[j_minus_one_index] = self._get_urandom_for_platform(
                     self.public_keys[j_minus_one_index])
                 c[j_index] = self._sign_part_3_subpart_1(
@@ -189,20 +192,23 @@ class LightweightRingSingatures:
         I = signature.I
         return (c, x, event_id, public_keys, message, I)
 
-    def _verify_part_1(self, public_keys: list, message: str, event_id: int) -> str:
+    def _verify_part_1(self, public_keys: list, message: str, event_id: mpz) -> str:
         to_be_hashed = (str(self._get_all_public_keys_as_one_int(
             public_keys)), message, str(event_id))
         return str(self._hash(to_be_hashed, public_keys[0]))
 
     def _verify_part_2_and_3(self, c: list, x: list, r: list, I: int, public_keys: int, h: str) -> (list):
         for i in range(len(public_keys)):
-            r[i] = int((c[i]*I)+pow(x[i], 2)) % public_keys[i]
-            if (i+1 == len(public_keys)):
+            left = mod(mul(c[i],I),public_keys[i])
+            right = powmod(x[i],mpz(2),public_keys[i])
+            # r[i] = int((c[i]*I)+pow(x[i], 2)) % public_keys[i]
+            r[i] = mod(add(left,right),public_keys[i])
+            if (add(i,mpz(1)) == len(public_keys)):
                 return r
             else:
-                c[i+1] = self._hash((h, str(r[i])),public_keys[i+1])
+                c[add(i,mpz(1))] = self._hash((h, str(r[i])),public_keys[add(i,mpz(1))])
 
-    def _verify_part_4(self, c: list, r: list, h: str,public_keys) -> bool:
+    def _verify_part_4(self, c: list, r: list, h: str,public_keys: list) -> bool:
         res = self._hash((h, str(r[-1])),public_keys[0])
         return res == c[0]
 
@@ -216,7 +222,7 @@ class LightweightRingSingatures:
             return True
         else:
             for record in self.verified_key_images[str(event_id)]:
-                if(record["I"] == int(I)):
+                if(record["I"] == mpz(I)):
                     if record["message"] == message:
                         return True
                     else:
@@ -234,14 +240,14 @@ class LightweightRingSingatures:
             "event_id" : event_id,
             "verify_time" : time.time() - start
         })
-    def _hash(self, parts: list,n:int) -> int:
+    def _hash(self, parts: list,n:mpz) -> mpz:
         s = ""
         for part in parts:
             s = s + part
-        return int(int(sha256(s.encode()).hexdigest(), 16) % n)
+        return mod(mpz(int(sha256(s.encode()).hexdigest(), 16)),n)
 
 
-    def _calculate_sqrt_mod_p(self, a: int) -> (bool, int):
+    def _calculate_sqrt_mod_p(self, a: int) -> (bool, mpz):
         residues = list()
         try:
             residues.append(Tonelli.calc(a, self.p))
@@ -250,9 +256,9 @@ class LightweightRingSingatures:
         except:
             return (False, None)
 
-    def _find_index_of_signing_user(self) -> int:
+    def _find_index_of_signing_user(self) -> mpz:
         try:
-            return self.public_keys.index(self.N)
+            return mpz(self.public_keys.index(self.N))
         except Exception as e:
             print("User who wants to sign is not in RING GROUP")
             print("Nothing to do in signing... exiting program")
@@ -265,12 +271,13 @@ class LightweightRingSingatures:
         self.params_time["sign"][str(event_id)]["time"] = time.time() - start
         self.params_time["sign"][str(event_id)]["recalculatated_x"] = recalculated_x
 
-    def _get_urandom_for_platform(self, max_number: int) -> int:
+    def _get_urandom_for_platform(self, max_number:mpz) -> mpz:
         rng = random.SystemRandom()
         if (max_number > sys.maxsize):
-            return rng.randint(0,sys.maxsize)
+            return mpz(rng.randint(0,sys.maxsize))
         else:
-            return rng.randint(0,max_number)
+            return mpz(rng.randint(0,max_number))
+
     def _get_all_public_keys_as_one_int(self, keys=None) -> int:
         if(keys is None):
             keys = self.public_keys
@@ -280,8 +287,9 @@ class LightweightRingSingatures:
         return int(result)
 
     def key_image(self, event_id: int) -> None:
+        event_id = mpz(event_id)
         start = time.time()
-        a = int((str(self.p)+str(self.N)+str(event_id))) % self.N
+        a = mod(mpz(int(str(self.p)+str(self.N)+str(event_id))),self.N)
         while(True):
             (success, result) = self._calculate_sqrt_mod_p(a)
             if(success):
@@ -289,7 +297,7 @@ class LightweightRingSingatures:
                 self.keyimage_base = a
                 break
             else:
-                a += 1
+                a = add(a,mpz(1))
                 pass
         end = time.time()
         self.params_time["key_image"] = end-start
@@ -298,36 +306,36 @@ class LightweightRingSingatures:
 class Tonelli:
     @ staticmethod
     def legendre(a:mpz, p:mpz)->mpz:
-        return gmpy2.powmod(a, gmpy2.sub(p,mpz(1)) // 2, p)
+        return powmod(a, sub(p,mpz(1)) // 2, p)
 
     @ staticmethod
     def calc(n: mpz, p: mpz) -> mpz:
         assert Tonelli.legendre(n, p) == 1, "not a square (mod p)"
-        q = gmpy2.sub(p,mpz(1))
+        q = sub(p,mpz(1))
         s = mpz(0)
-        while gmpy2.f_mod(q,mpz(2)) == 0:
+        while mod(q,mpz(2)) == 0:
             q //= mpz(2)
-            s = gmpy2.add(s,mpz(1))
+            s = add(s,mpz(1))
         if s == 1:
-            return gmpy2.powmod(n, gmpy2.add(p,mpz(1)) // mpz(4), p)
+            return powmod(n, add(p,mpz(1)) // mpz(4), p)
         for z in range(2, p):
-            if gmpy2.sub(p,mpz(1)) == Tonelli.legendre(mpz(z), p):
+            if sub(p,mpz(1)) == Tonelli.legendre(mpz(z), p):
                 break
-        c = gmpy2.powmod(mpz(z), q, p)
-        r = gmpy2.powmod(n, gmpy2.add(q,mpz(1)) // mpz(2), p)
-        t = gmpy2.powmod(n, q, p)
+        c = powmod(mpz(z), q, p)
+        r = powmod(n, add(q,mpz(1)) // mpz(2), p)
+        t = powmod(n, q, p)
         m = s
         t2 = mpz(0)
-        while gmpy2.f_mod(gmpy2.sub(t,mpz(1)), p) != 0:
-            t2 = gmpy2.f_mod(gmpy2.mul(t,t),p)
+        while mod(sub(t,mpz(1)), p) != 0:
+            t2 = mod(mul(t,t),p)
             for i in range(1, m):
-                if gmpy2.f_mod(gmpy2.sub(t2,mpz(1)),p) == 0:
+                if mod(sub(t2,mpz(1)),p) == 0:
                     break
-                t2 = gmpy2.f_mod(gmpy2.mul(t2,t2),p)
-            b = gmpy2.powmod(c, mpz(1) << gmpy2.sub(gmpy2.sub(m,i),mpz(1)), p)
-            r = gmpy2.f_mod(gmpy2.mul(r,b),p)
-            c = gmpy2.f_mod(gmpy2.mul(b,b),p) #(b * b) % p
-            t = gmpy2.f_mod(gmpy2.mul(t,c),p)#(t * c) % p
+                t2 = mod(mul(t2,t2),p)
+            b = powmod(c, mpz(1) << sub(sub(m,i),mpz(1)), p)
+            r = mod(mul(r,b),p)
+            c = mod(mul(b,b),p) #(b * b) % p
+            t = mod(mul(t,c),p)#(t * c) % p
             m = mpz(i)
         return r
 
@@ -338,9 +346,9 @@ class Chinnese_reminder_theorem:
         if a == 0:
             return (b, mpz(0), mpz(1))
         else:
-            g, y, x = Chinnese_reminder_theorem().egcd(gmpy2.f_mod(b,a), a)
+            g, y, x = Chinnese_reminder_theorem().egcd(mod(b,a), a)
 
-            return (g, gmpy2.sub(x,gmpy2.mul((b // a), y)), y)
+            return (g, sub(x,mul((b // a), y)), y)
 
     @ staticmethod
     def modInverse(a: mpz, m: mpz):
@@ -348,7 +356,7 @@ class Chinnese_reminder_theorem:
         if g != 1:
             raise Exception('modular inverse does not exist')
         else:
-            return gmpy2.f_mod(x,m)
+            return mod(x,m)
 
     @ staticmethod
     def calc(a: list, b: list, n=2) -> mpz:
@@ -363,6 +371,6 @@ class Chinnese_reminder_theorem:
             b2.append(Chinnese_reminder_theorem().modInverse(b1[i], b[i]))
         for i in range(n):
             x = a[i] * b1[i] * b2[i]
-            y = gmpy2.add(y,x)
-        y = gmpy2.f_mod(y,m)#y % m
+            y = add(y,x)
+        y = mod(y,m)#y % m
         return y
