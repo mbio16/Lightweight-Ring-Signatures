@@ -2,12 +2,13 @@ from dataclasses import dataclass
 from enum import Enum
 from hashlib import sha256
 from functools import reduce
+import gmpy2
+from gmpy2 import mpz
 import os
 import sys
 import time
 import random
 import subprocess
-
 
 @dataclass
 class Signature:
@@ -18,6 +19,10 @@ class Signature:
     event_id: int
     public_keys: list
 
+class KeySize(Enum):
+    Size_512 = 512
+    Size_1024 = 1024
+    Size_2048 = 2048
 
 class LightweightRingSingatures:
 
@@ -37,16 +42,15 @@ class LightweightRingSingatures:
         self.q = q
         self.N = self.p * self.q
 
-    def generate_key(self) -> None:
+    def generate_key(self,size: KeySize) -> None:
         start = time.process_time()
-
-        self.p = int(subprocess.run(["openssl","prime","-generate","-bits", "32", "-hex"], capture_output=True, text=True).stdout[:-1],16)
-        self.q = int(subprocess.run(["openssl","prime","-generate","-bits", "32", "-hex"], capture_output=True, text=True).stdout[:-1],16)
+        self.p = mpz(int(subprocess.run(["openssl","prime","-generate","-bits", str(size.value), "-hex"], capture_output=True, text=True).stdout[:-1],16))
+        self.q = int(subprocess.run(["openssl","prime","-generate","-bits", str(size.value), "-hex"], capture_output=True, text=True).stdout[:-1],16)
         self.N = self.p*self.q
         end = time.process_time()
         self.params_time["key_generation"] = end - start
 
-    def import_public_key(self, public_key: int) -> None:
+    def import_public_key(self, public_key: mpz) -> None:
         self.public_keys.append(public_key)
 
     def import_public_keys(self, public_keys: list) -> None:
@@ -293,11 +297,11 @@ class LightweightRingSingatures:
 
 class Tonelli:
     @ staticmethod
-    def legendre(a, p):
+    def legendre(a:mpz, p:mpz)->mpz:
         return pow(a, (p - 1) // 2, p)
 
     @ staticmethod
-    def calc(n: int, p: int) -> int:
+    def calc(n: mpz, p: mpz) -> mpz:
         assert Tonelli.legendre(n, p) == 1, "not a square (mod p)"
         q = p - 1
         s = 0
@@ -330,34 +334,35 @@ class Tonelli:
 
 class Chinnese_reminder_theorem:
     @ staticmethod
-    def egcd(a: int, b: int):
+    def egcd(a: mpz, b: mpz):
         if a == 0:
-            return (b, 0, 1)
+            return (b, mpz(0), mpz(1))
         else:
-            g, y, x = Chinnese_reminder_theorem().egcd(b % a, a)
-            return (g, x - (b // a) * y, y)
+            g, y, x = Chinnese_reminder_theorem().egcd(gmpy2.f_mod(b,a), a)
+
+            return (g, gmpy2.sub(x,gmpy2.mul((b // a), y)), y)
 
     @ staticmethod
-    def modInverse(a: int, m: int):
+    def modInverse(a: mpz, m: mpz):
         g, x, y = Chinnese_reminder_theorem().egcd(a, m)
         if g != 1:
             raise Exception('modular inverse does not exist')
         else:
-            return x % m
+            return gmpy2.f_mod(x,m)
 
     @ staticmethod
-    def calc(a: list, b: list, n=2) -> int:
+    def calc(a: list, b: list, n=2) -> mpz:
         b1 = []
         b2 = []
-        m = 1
-        y = 0
+        m = mpz(1)
+        y = mpz(0)
         for i in range(n):
             m = m * b[i]
         for i in range(n):
-            b1.append(int(m / b[i]))
+            b1.append(mpz(m / b[i]))
             b2.append(Chinnese_reminder_theorem().modInverse(b1[i], b[i]))
         for i in range(n):
-            x = int(a[i] * b1[i] * b2[i])
-            y = y + x
-        y = y % m
+            x = a[i] * b1[i] * b2[i]
+            y = gmpy2.add(y,x)
+        y = gmpy2.f_mod(y,m)#y % m
         return y
